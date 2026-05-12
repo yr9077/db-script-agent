@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block title %}Scripts — {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h2 class="mb-0"><i class="bi bi-files me-2"></i>Script Library</h2>
+  <a href="/" class="btn btn-primary"><i class="bi bi-plus-lg me-1"></i>New Script</a>
+</div>
+
+<!-- Filters -->
+<div class="card shadow-sm mb-4">
+  <div class="card-body">
+    <div class="row g-2">
+      <div class="col-md-3">
+        <select id="filterDialect" class="form-select">
+          <option value="">All Dialects</option>
+          <option value="mysql">MySQL</option>
+          <option value="postgresql">PostgreSQL</option>
+          <option value="sqlite">SQLite</option>
+        </select>
+      </div>
+      <div class="col-md-3">
+        <select id="filterStatus" class="form-select">
+          <option value="">All Statuses</option>
+          <option value="pending">Pending</option>
+          <option value="approved">Approved</option>
+          <option value="rejected">Rejected</option>
+        </select>
+      </div>
+      <div class="col-md-2">
+        <button class="btn btn-outline-secondary w-100" id="filterBtn">
+          <i class="bi bi-funnel me-1"></i>Filter
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Table -->
+<div class="card shadow-sm">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0" id="scriptsTable">
+        <thead class="table-dark">
+          <tr>
+            <th>#</th>
+            <th>Title</th>
+            <th>Dialect</th>
+            <th>Type</th>
+            <th>Status</th>
+            <th>Risk</th>
+            <th>Created</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="scriptsBody">
+          <tr><td colspan="8" class="text-center py-4 text-muted">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Pagination -->
+<div class="d-flex justify-content-between align-items-center mt-3">
+  <span id="pageInfo" class="text-muted small"></span>
+  <div class="btn-group btn-group-sm">
+    <button class="btn btn-outline-secondary" id="prevBtn" disabled><i class="bi bi-chevron-left"></i></button>
+    <button class="btn btn-outline-secondary" id="nextBtn" disabled><i class="bi bi-chevron-right"></i></button>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+const RISK_COLORS = {safe:'success', low:'info', medium:'warning', high:'warning', critical:'danger'};
+const STATUS_COLORS = {pending:'secondary', approved:'success', rejected:'danger'};
+const DIALECT_ICONS = {mysql:'<i class="bi bi-hdd me-1"></i>', postgresql:'<i class="bi bi-elephant me-1"></i>', sqlite:'<i class="bi bi-file-earmark-binary me-1"></i>'};
+
+let skip = 0;
+const limit = 20;
+let total = 0;
+
+async function loadScripts() {
+  const dialect = document.getElementById('filterDialect').value;
+  const status  = document.getElementById('filterStatus').value;
+  let url = `/api/scripts?skip=${skip}&limit=${limit}`;
+  if (dialect) url += `&dialect=${dialect}`;
+  if (status)  url += `&status=${status}`;
+
+  const tbody = document.getElementById('scriptsBody');
+  tbody.innerHTML = '<tr><td colspan="8" class="text-center py-4"><div class="spinner-border spinner-border-sm text-primary"></div></td></tr>';
+
+  try {
+    const resp = await fetch(url);
+    const data = await resp.json();
+    tbody.innerHTML = '';
+    if (!data.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="text-center py-4 text-muted">No scripts found.</td></tr>';
+      document.getElementById('pageInfo').textContent = '';
+      document.getElementById('prevBtn').disabled = true;
+      document.getElementById('nextBtn').disabled = true;
+      return;
+    }
+    data.forEach(s => {
+      const row = document.createElement('tr');
+      row.innerHTML = `
+        <td class="text-muted small">${s.id}</td>
+        <td><a href="/scripts/${s.id}" class="text-decoration-none fw-semibold">${escHtml(s.title)}</a></td>
+        <td>${DIALECT_ICONS[s.dialect] || ''}${s.dialect}</td>
+        <td><span class="badge bg-light text-dark">${s.script_type.toUpperCase()}</span></td>
+        <td><span class="badge bg-${STATUS_COLORS[s.status] || 'secondary'}">${s.status}</span></td>
+        <td><span class="badge bg-${RISK_COLORS[s.risk_level] || 'secondary'}">${s.risk_level}</span></td>
+        <td class="text-muted small">${new Date(s.created_at).toLocaleString()}</td>
+        <td>
+          <a href="/scripts/${s.id}" class="btn btn-sm btn-outline-primary"><i class="bi bi-eye"></i></a>
+        </td>`;
+      tbody.appendChild(row);
+    });
+    total = skip + data.length;
+    document.getElementById('pageInfo').textContent = `Showing ${skip + 1}–${total}`;
+    document.getElementById('prevBtn').disabled = skip === 0;
+    document.getElementById('nextBtn').disabled = data.length < limit;
+  } catch(err) {
+    tbody.innerHTML = `<tr><td colspan="8" class="text-center text-danger py-3">Error: ${err.message}</td></tr>`;
+  }
+}
+
+function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+document.getElementById('filterBtn').addEventListener('click', () => { skip = 0; loadScripts(); });
+document.getElementById('prevBtn').addEventListener('click', () => { skip = Math.max(0, skip - limit); loadScripts(); });
+document.getElementById('nextBtn').addEventListener('click', () => { skip += limit; loadScripts(); });
+
+loadScripts();
+</script>
+{% endblock %}

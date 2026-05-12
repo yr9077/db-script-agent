@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+{% block title %}Generate SQL — {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-10">
+
+    <!-- Hero -->
+    <div class="text-center mb-4">
+      <h1 class="display-5 fw-bold"><i class="bi bi-magic me-2 text-primary"></i>AI SQL Generator</h1>
+      <p class="lead text-muted">Describe what you need — get production-ready SQL with automated risk checks.</p>
+    </div>
+
+    <!-- Generator Card -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-body p-4">
+        <form id="generateForm">
+          <div class="mb-3">
+            <label for="promptInput" class="form-label fw-semibold">Natural Language Prompt</label>
+            <textarea id="promptInput" class="form-control" rows="4"
+                      placeholder="E.g.: Create a users table with id, email, created_at columns for MySQL"></textarea>
+          </div>
+          <div class="row g-3 mb-3">
+            <div class="col-md-4">
+              <label for="dialectSelect" class="form-label fw-semibold">Dialect</label>
+              <select id="dialectSelect" class="form-select">
+                <option value="mysql" selected>MySQL</option>
+                <option value="postgresql">PostgreSQL</option>
+                <option value="sqlite">SQLite</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label for="typeSelect" class="form-label fw-semibold">Script Type</label>
+              <select id="typeSelect" class="form-select">
+                <option value="ddl" selected>DDL (Schema)</option>
+                <option value="dml">DML (Data)</option>
+                <option value="maintenance">Maintenance</option>
+              </select>
+            </div>
+            <div class="col-md-4 d-flex align-items-end">
+              <button type="submit" class="btn btn-primary w-100" id="generateBtn">
+                <i class="bi bi-lightning-charge-fill me-1"></i>Generate
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Clarification panel (hidden by default) -->
+    <div id="clarifyPanel" class="card border-warning shadow-sm mb-4 d-none">
+      <div class="card-header bg-warning bg-opacity-25">
+        <i class="bi bi-question-circle-fill text-warning me-2"></i>
+        <strong>Clarification needed</strong>
+      </div>
+      <div class="card-body">
+        <p id="clarifyQuestion" class="mb-3 text-dark"></p>
+        <div class="input-group">
+          <input type="text" id="clarifyInput" class="form-control" placeholder="Your answer…" />
+          <button class="btn btn-warning" id="clarifyBtn">
+            <i class="bi bi-send me-1"></i>Reply
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Result panel (hidden by default) -->
+    <div id="resultPanel" class="d-none">
+      <!-- Risk badge -->
+      <div class="d-flex align-items-center mb-2 gap-2">
+        <span class="fw-semibold">Risk Level:</span>
+        <span id="riskBadge" class="badge fs-6"></span>
+        <a id="viewScriptLink" href="#" class="btn btn-sm btn-outline-secondary ms-auto">
+          <i class="bi bi-eye me-1"></i>View / Edit Script
+        </a>
+      </div>
+
+      <!-- Risk items -->
+      <div id="riskItems" class="mb-3"></div>
+
+      <!-- SQL output -->
+      <div class="card shadow-sm">
+        <div class="card-header d-flex justify-content-between align-items-center py-2">
+          <span class="fw-semibold"><i class="bi bi-code-slash me-1"></i>Generated SQL</span>
+          <button class="btn btn-sm btn-outline-secondary" id="copyBtn">
+            <i class="bi bi-clipboard me-1"></i>Copy
+          </button>
+        </div>
+        <div class="card-body p-0">
+          <pre class="mb-0" style="max-height:480px;overflow:auto"><code class="language-sql" id="sqlOutput"></code></pre>
+        </div>
+      </div>
+
+      <!-- Regenerate -->
+      <div class="mt-3 d-flex gap-2">
+        <button class="btn btn-outline-primary" id="regenBtn">
+          <i class="bi bi-arrow-repeat me-1"></i>Regenerate
+        </button>
+      </div>
+    </div>
+
+    <!-- Spinner -->
+    <div id="loadingSpinner" class="text-center py-4 d-none">
+      <div class="spinner-border text-primary" role="status"></div>
+      <p class="mt-2 text-muted">Generating SQL…</p>
+    </div>
+
+    <!-- Error alert -->
+    <div id="errorAlert" class="alert alert-danger d-none" role="alert"></div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+const RISK_COLORS = {safe:'success', low:'info', medium:'warning', high:'warning', critical:'danger'};
+const RISK_ICONS  = {safe:'check-circle-fill', low:'info-circle-fill', medium:'exclamation-triangle-fill', high:'exclamation-triangle-fill', critical:'x-octagon-fill'};
+
+let currentSessionId = null;
+let currentScriptId  = null;
+
+function showError(msg) {
+  const el = document.getElementById('errorAlert');
+  el.textContent = msg;
+  el.classList.remove('d-none');
+}
+function hideError() { document.getElementById('errorAlert').classList.add('d-none'); }
+function showSpinner(v) { document.getElementById('loadingSpinner').classList.toggle('d-none', !v); }
+
+function renderResult(data) {
+  hideError();
+  document.getElementById('resultPanel').classList.remove('d-none');
+  document.getElementById('clarifyPanel').classList.add('d-none');
+
+  // SQL
+  const codeEl = document.getElementById('sqlOutput');
+  codeEl.textContent = data.sql;
+  hljs.highlightElement(codeEl);
+
+  // Risk badge
+  const rr = data.risk_report || {};
+  const level = rr.overall_level || 'safe';
+  const badge = document.getElementById('riskBadge');
+  badge.className = `badge fs-6 bg-${RISK_COLORS[level] || 'secondary'}`;
+  badge.innerHTML = `<i class="bi bi-${RISK_ICONS[level] || 'shield'} me-1"></i>${level.toUpperCase()}`;
+
+  // Risk items
+  const container = document.getElementById('riskItems');
+  container.innerHTML = '';
+  (rr.items || []).forEach(item => {
+    const color = RISK_COLORS[item.level] || 'secondary';
+    container.innerHTML += `
+      <div class="alert alert-${color} alert-dismissible py-2 mb-2" role="alert">
+        <i class="bi bi-${RISK_ICONS[item.level]} me-1"></i>
+        <strong>[${item.rule}]</strong> ${item.message}
+        ${item.line ? `<span class="text-muted ms-2">Line ${item.line}</span>` : ''}
+      </div>`;
+  });
+
+  // Script link
+  if (data.script_id) {
+    currentScriptId = data.script_id;
+    const link = document.getElementById('viewScriptLink');
+    link.href = `/scripts/${data.script_id}`;
+    link.classList.remove('d-none');
+  }
+}
+
+function renderClarify(data) {
+  document.getElementById('clarifyPanel').classList.remove('d-none');
+  document.getElementById('resultPanel').classList.add('d-none');
+  document.getElementById('clarifyQuestion').textContent = data.clarification_question;
+  currentSessionId = data.session_id;
+}
+
+document.getElementById('generateForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  hideError();
+  showSpinner(true);
+  document.getElementById('resultPanel').classList.add('d-none');
+  currentSessionId = null;
+
+  const payload = {
+    prompt: document.getElementById('promptInput').value.trim(),
+    dialect: document.getElementById('dialectSelect').value,
+    script_type: document.getElementById('typeSelect').value,
+  };
+  if (!payload.prompt) { showError('Please enter a prompt.'); showSpinner(false); return; }
+
+  try {
+    const resp = await fetch('/api/generate', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const data = await resp.json();
+    showSpinner(false);
+    if (!resp.ok) { showError(data.detail || 'Generation failed.'); return; }
+    currentSessionId = data.session_id;
+    if (data.needs_clarification) { renderClarify(data); } else { renderResult(data); }
+  } catch(err) { showSpinner(false); showError('Network error: ' + err.message); }
+});
+
+document.getElementById('clarifyBtn').addEventListener('click', async () => {
+  const msg = document.getElementById('clarifyInput').value.trim();
+  if (!msg) return;
+  showSpinner(true);
+  try {
+    const resp = await fetch('/api/generate/clarify', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({session_id: currentSessionId, message: msg})});
+    const data = await resp.json();
+    showSpinner(false);
+    if (!resp.ok) { showError(data.detail || 'Clarification failed.'); return; }
+    if (data.needs_clarification) { renderClarify(data); } else { renderResult(data); }
+  } catch(err) { showSpinner(false); showError('Network error: ' + err.message); }
+});
+
+document.getElementById('regenBtn').addEventListener('click', () => {
+  document.getElementById('generateForm').dispatchEvent(new Event('submit'));
+});
+
+document.getElementById('copyBtn').addEventListener('click', () => {
+  const sql = document.getElementById('sqlOutput').textContent;
+  navigator.clipboard.writeText(sql).then(() => {
+    const btn = document.getElementById('copyBtn');
+    btn.innerHTML = '<i class="bi bi-check2 me-1"></i>Copied!';
+    setTimeout(() => { btn.innerHTML = '<i class="bi bi-clipboard me-1"></i>Copy'; }, 2000);
+  });
+});
+</script>
+{% endblock %}
